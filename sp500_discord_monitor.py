@@ -116,7 +116,15 @@ async def fetch_market_data(tickers: List[str], batch_size: int = 50) -> Dict[st
                     low = ticker_data['Low'].min()
                     volume = ticker_data['Volume'].sum()
                     
+                    # Skip if any value is NaN or invalid
+                    if pd.isna(open_price) or pd.isna(current_price) or open_price == 0:
+                        continue
+                    
                     change_pct = ((current_price - open_price) / open_price) * 100
+                    
+                    # Skip if change is NaN or infinite
+                    if pd.isna(change_pct) or np.isinf(change_pct):
+                        continue
                     
                     results[ticker] = {
                         'current_price': float(current_price),
