@@ -22,6 +22,7 @@ from io import StringIO
 
 WIKI_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+LANGUAGE = os.getenv("LANGUAGE", "BOTH").upper()  # EN, FR, or BOTH
 TOP_MOVER_PERCENTILE = float(os.getenv("TOP_MOVER_PERCENTILE", "75.0"))
 HISTORICAL_DAYS = int(os.getenv("HISTORICAL_DAYS", "5"))
 
