@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-S&P 500 Discord Monitor - Single Script for GitHub Actions
+S&P 500 Discord Monitor big Movers - Single Script for GitHub Actions
 Optimized for serverless execution with all dependencies in one file.
 """
 
