@@ -324,70 +324,145 @@ def build_comprehensive_message(
     volatility_leaders: List,
     volume_leaders: List
 ) -> str:
-    """Build comprehensive market overview message."""
+    """Build comprehensive market overview message in selected language(s)."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+    language = os.getenv("LANGUAGE", "EN").upper()
     
-    message = f"**📊 Complete S&P 500 Market Overview - {timestamp}**\n\n"
+    messages = []
     
-    # Market Summary
-    message += "**📈 Market Summary**\n"
-    message += f"• Total Stocks: **{stats['total_stocks']}**\n"
-    message += f"• Gainers: **{stats['gainers']}** ({stats['gainers']/stats['total_stocks']*100:.1f}%)\n"
-    message += f"• Losers: **{stats['losers']}** ({stats['losers']/stats['total_stocks']*100:.1f}%)\n"
-    message += f"• Average Change: **{stats['avg_change']:+.2f}%**\n"
-    message += f"• Market Sentiment: **{stats['sentiment']}**\n"
-    message += f"• Volatility (Std Dev): **{stats['std_dev']:.2f}%**\n\n"
-    
-    # Top 10 Gainers
-    message += "**🚀 Top 10 Gainers**\n"
-    for ticker, change in top_gainers:
-        message += f"• {ticker}: **+{change:.2f}%**\n"
-    message += "\n"
-    
-    # Top 10 Losers
-    message += "**📉 Top 10 Losers**\n"
-    for ticker, change in top_losers:
-        message += f"• {ticker}: **{change:.2f}%**\n"
-    message += "\n"
-    
-    # Sector Performance
-    message += "**🏢 Sector Performance**\n"
-    for sector, data in sector_performance.items():
-        emoji = "🟢" if data['avg_change'] > 0 else "🔴"
-        message += f"{emoji} **{sector}**: {data['avg_change']:+.2f}% "
-        message += f"(Best: {data['best']:+.2f}%, Worst: {data['worst']:+.2f}%)\n"
-    message += "\n"
-    
-    # Volatility Leaders
-    message += "**⚡ Highest Volatility (Intraday Range)**\n"
-    for ticker, vol, change in volatility_leaders:
-        message += f"• {ticker}: **{vol:.2f}%** range ({change:+.2f}% change)\n"
-    message += "\n"
-    
-    # Volume Leaders
-    message += "**📊 Highest Volume**\n"
-    for ticker, volume, change in volume_leaders:
-        vol_millions = volume / 1_000_000
-        message += f"• {ticker}: **{vol_millions:.1f}M** shares ({change:+.2f}%)\n"
-    message += "\n"
-    
-    # Market Breadth Analysis
-    advance_decline = stats['gainers'] - stats['losers']
-    message += "**📊 Market Breadth**\n"
-    message += f"• Advance/Decline: **{advance_decline:+d}**\n"
-    
-    if abs(advance_decline) > 100:
-        if advance_decline > 0:
-            message += "• **Strong bullish breadth** - Broad market strength\n"
+    # ENGLISH VERSION
+    if language in ["EN", "BOTH"]:
+        message_en = f"**📊 Complete S&P 500 Market Overview - {timestamp}**\n\n"
+        
+        message_en += "**📈 Market Summary**\n"
+        message_en += f"• Total Stocks: **{stats['total_stocks']}**\n"
+        message_en += f"• Gainers: **{stats['gainers']}** ({stats['gainers']/stats['total_stocks']*100:.1f}%)\n"
+        message_en += f"• Losers: **{stats['losers']}** ({stats['losers']/stats['total_stocks']*100:.1f}%)\n"
+        message_en += f"• Average Change: **{stats['avg_change']:+.2f}%**\n"
+        message_en += f"• Market Sentiment: **{stats['sentiment']}**\n"
+        message_en += f"• Volatility (Std Dev): **{stats['std_dev']:.2f}%**\n\n"
+        
+        message_en += "**🚀 Top 10 Gainers**\n"
+        for ticker, change in top_gainers:
+            if not pd.isna(change):
+                message_en += f"• {ticker}: **+{change:.2f}%**\n"
+        message_en += "\n"
+        
+        message_en += "**📉 Top 10 Losers**\n"
+        for ticker, change in top_losers:
+            if not pd.isna(change):
+                message_en += f"• {ticker}: **{change:.2f}%**\n"
+        message_en += "\n"
+        
+        message_en += "**🏢 Sector Performance**\n"
+        for sector, data in sector_performance.items():
+            emoji = "🟢" if data['avg_change'] > 0 else "🔴"
+            message_en += f"{emoji} **{sector}**: {data['avg_change']:+.2f}% "
+            message_en += f"(Best: {data['best']:+.2f}%, Worst: {data['worst']:+.2f}%)\n"
+        message_en += "\n"
+        
+        message_en += "**⚡ Highest Volatility (Intraday Range)**\n"
+        for ticker, vol, change in volatility_leaders:
+            if not pd.isna(vol) and not pd.isna(change):
+                message_en += f"• {ticker}: **{vol:.2f}%** range ({change:+.2f}% change)\n"
+        message_en += "\n"
+        
+        message_en += "**📊 Highest Volume**\n"
+        for ticker, volume, change in volume_leaders:
+            if not pd.isna(change):
+                vol_millions = volume / 1_000_000
+                message_en += f"• {ticker}: **{vol_millions:.1f}M** shares ({change:+.2f}%)\n"
+        message_en += "\n"
+        
+        advance_decline = stats['gainers'] - stats['losers']
+        message_en += "**📊 Market Breadth**\n"
+        message_en += f"• Advance/Decline: **{advance_decline:+d}**\n"
+        
+        if abs(advance_decline) > 100:
+            if advance_decline > 0:
+                message_en += "• **Strong bullish breadth** - Broad market strength\n"
+            else:
+                message_en += "• **Strong bearish breadth** - Broad market weakness\n"
         else:
-            message += "• **Strong bearish breadth** - Broad market weakness\n"
+            message_en += "• **Mixed breadth** - Selective moves\n"
+        
+        message_en += "\n_Automated by GitHub Actions • All S&P 500 Variations_"
+        messages.append(message_en)
+    
+    # FRENCH VERSION
+    if language in ["FR", "BOTH"]:
+        message_fr = f"**📊 Vue Complète du Marché S&P 500 - {timestamp}**\n\n"
+        
+        message_fr += "**📈 Résumé du Marché**\n"
+        message_fr += f"• Total Actions: **{stats['total_stocks']}**\n"
+        message_fr += f"• Hausses: **{stats['gainers']}** ({stats['gainers']/stats['total_stocks']*100:.1f}%)\n"
+        message_fr += f"• Baisses: **{stats['losers']}** ({stats['losers']/stats['total_stocks']*100:.1f}%)\n"
+        message_fr += f"• Variation Moyenne: **{stats['avg_change']:+.2f}%**\n"
+        message_fr += f"• Sentiment du Marché: **{stats['sentiment']}**\n"
+        message_fr += f"• Volatilité (Écart-type): **{stats['std_dev']:.2f}%**\n\n"
+        
+        message_fr += "**🚀 Top 10 Hausses**\n"
+        for ticker, change in top_gainers:
+            if not pd.isna(change):
+                message_fr += f"• {ticker}: **+{change:.2f}%**\n"
+        message_fr += "\n"
+        
+        message_fr += "**📉 Top 10 Baisses**\n"
+        for ticker, change in top_losers:
+            if not pd.isna(change):
+                message_fr += f"• {ticker}: **{change:.2f}%**\n"
+        message_fr += "\n"
+        
+        sector_translations = {
+            'Technology': 'Technologie',
+            'Finance': 'Finance',
+            'Healthcare': 'Santé',
+            'Consumer': 'Consommation',
+            'Energy': 'Énergie',
+            'Industrial': 'Industrie'
+        }
+        
+        message_fr += "**🏢 Performance par Secteur**\n"
+        for sector, data in sector_performance.items():
+            emoji = "🟢" if data['avg_change'] > 0 else "🔴"
+            sector_fr = sector_translations.get(sector, sector)
+            message_fr += f"{emoji} **{sector_fr}**: {data['avg_change']:+.2f}% "
+            message_fr += f"(Meilleur: {data['best']:+.2f}%, Pire: {data['worst']:+.2f}%)\n"
+        message_fr += "\n"
+        
+        message_fr += "**⚡ Plus Haute Volatilité (Amplitude Journalière)**\n"
+        for ticker, vol, change in volatility_leaders:
+            if not pd.isna(vol) and not pd.isna(change):
+                message_fr += f"• {ticker}: **{vol:.2f}%** amplitude ({change:+.2f}% variation)\n"
+        message_fr += "\n"
+        
+        message_fr += "**📊 Plus Fort Volume**\n"
+        for ticker, volume, change in volume_leaders:
+            if not pd.isna(change):
+                vol_millions = volume / 1_000_000
+                message_fr += f"• {ticker}: **{vol_millions:.1f}M** actions ({change:+.2f}%)\n"
+        message_fr += "\n"
+        
+        advance_decline = stats['gainers'] - stats['losers']
+        message_fr += "**📊 Étendue du Marché**\n"
+        message_fr += f"• Hausses/Baisses: **{advance_decline:+d}**\n"
+        
+        if abs(advance_decline) > 100:
+            if advance_decline > 0:
+                message_fr += "• **Forte tendance haussière** - Force généralisée du marché\n"
+            else:
+                message_fr += "• **Forte tendance baissière** - Faiblesse généralisée du marché\n"
+        else:
+            message_fr += "• **Tendance mixte** - Mouvements sélectifs\n"
+        
+        message_fr += "\n_Automatisé par GitHub Actions • Toutes Variations S&P 500_"
+        messages.append(message_fr)
+    
+    # Combine with separator if both languages
+    if language == "BOTH":
+        return "\n\n" + "─" * 50 + "\n\n".join(messages)
     else:
-        message += "• **Mixed breadth** - Selective moves\n"
-    
-    message += "\n_Automated by GitHub Actions • All S&P 500 Variations_"
-    
-    return message
-
+        return messages[0]
 
 # ============================================================================
 # MAIN EXECUTION
