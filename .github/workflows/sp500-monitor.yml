@@ -61,6 +61,7 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           TOP_MOVER_PERCENTILE: ${{ vars.TOP_MOVER_PERCENTILE || '75.0' }}
           HISTORICAL_DAYS: ${{ vars.HISTORICAL_DAYS || '5' }}
+          LANGUAGE: ${{ vars.LANGUAGE_BIG_MOVERS || 'EN' }}  
         run: |
           echo "Starting S&P 500 Monitor..."
           echo "Time: $(date)"
