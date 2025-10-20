@@ -395,43 +395,89 @@ async def send_discord_message(content: str) -> bool:
 
 
 def build_message(top_movers: Dict, patterns: Dict) -> str:
-    """Build formatted Discord message."""
+    """Build formatted Discord message in selected language(s)."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+    language = os.getenv("LANGUAGE", "EN").upper()
     
-    message = f"**📊 S&P 500 Market Update - {timestamp}**\n\n"
+    messages = []
     
-    # Top Gainers
-    if top_movers.get('gainers'):
-        message += "**🚀 Top Gainers (>75th percentile)**\n"
-        for ticker, change in top_movers['gainers'][:5]:
-            message += f"• {ticker}: **+{change:.2f}%**\n"
-        message += "\n"
-    
-    # Top Losers
-    if top_movers.get('losers'):
-        message += "**📉 Top Losers (>75th percentile)**\n"
-        for ticker, change in top_movers['losers'][:5]:
-            message += f"• {ticker}: **{change:.2f}%**\n"
-        message += "\n"
-    
-    # Market Pattern Analysis
-    if patterns:
-        message += "**🔍 Market Pattern Analysis**\n"
+    # ENGLISH VERSION
+    if language in ["EN", "BOTH"]:
+        message_en = f"**📊 S&P 500 Market Update - {timestamp}**\n\n"
         
-        if patterns.get('friday_thursday_pattern'):
-            p = patterns['friday_thursday_pattern']
-            message += f"⚠️ Friday high < Thursday high detected\n"
-            message += f"• Likely revisit Friday low: **${p['friday_low']:.2f}** on Monday\n"
-            message += f"• Key ticker: **{p['ticker']}**\n\n"
+        if top_movers.get('gainers'):
+            message_en += "**🚀 Top Gainers (>75th percentile)**\n"
+            for ticker, change in top_movers['gainers'][:5]:
+                if not pd.isna(change):
+                    message_en += f"• {ticker}: **+{change:.2f}%**\n"
+            message_en += "\n"
         
-        if patterns.get('wednesday_monday_pattern'):
-            p = patterns['wednesday_monday_pattern']
-            message += f"⚠️ Wednesday high < Monday high detected\n"
-            message += f"• Likely revisit Wednesday low: **${p['wednesday_low']:.2f}** on Thursday\n"
-            message += f"• Key ticker: **{p['ticker']}**\n\n"
+        if top_movers.get('losers'):
+            message_en += "**📉 Top Losers (>75th percentile)**\n"
+            for ticker, change in top_movers['losers'][:5]:
+                if not pd.isna(change):
+                    message_en += f"• {ticker}: **{change:.2f}%**\n"
+            message_en += "\n"
+        
+        if patterns:
+            message_en += "**🔍 Market Pattern Analysis**\n"
+            
+            if patterns.get('friday_thursday_pattern'):
+                p = patterns['friday_thursday_pattern']
+                message_en += f"⚠️ Friday high < Thursday high detected\n"
+                message_en += f"• Likely revisit Friday low: **${p['friday_low']:.2f}** on Monday\n"
+                message_en += f"• Key ticker: **{p['ticker']}**\n\n"
+            
+            if patterns.get('wednesday_monday_pattern'):
+                p = patterns['wednesday_monday_pattern']
+                message_en += f"⚠️ Wednesday high < Monday high detected\n"
+                message_en += f"• Likely revisit Wednesday low: **${p['wednesday_low']:.2f}** on Thursday\n"
+                message_en += f"• Key ticker: **{p['ticker']}**\n\n"
+        
+        message_en += "_Automated by GitHub Actions_"
+        messages.append(message_en)
     
-    message += f"_Automated by GitHub Actions_"
-    return message
+    # FRENCH VERSION
+    if language in ["FR", "BOTH"]:
+        message_fr = f"**📊 Actualisation Marché S&P 500 - {timestamp}**\n\n"
+        
+        if top_movers.get('gainers'):
+            message_fr += "**🚀 Plus Fortes Hausses (>75e centile)**\n"
+            for ticker, change in top_movers['gainers'][:5]:
+                if not pd.isna(change):
+                    message_fr += f"• {ticker}: **+{change:.2f}%**\n"
+            message_fr += "\n"
+        
+        if top_movers.get('losers'):
+            message_fr += "**📉 Plus Fortes Baisses (>75e centile)**\n"
+            for ticker, change in top_movers['losers'][:5]:
+                if not pd.isna(change):
+                    message_fr += f"• {ticker}: **{change:.2f}%**\n"
+            message_fr += "\n"
+        
+        if patterns:
+            message_fr += "**🔍 Analyse des Patterns de Marché**\n"
+            
+            if patterns.get('friday_thursday_pattern'):
+                p = patterns['friday_thursday_pattern']
+                message_fr += f"⚠️ Plus haut vendredi < plus haut jeudi détecté\n"
+                message_fr += f"• Probable revisite du plus bas vendredi: **${p['friday_low']:.2f}** lundi\n"
+                message_fr += f"• Titre clé: **{p['ticker']}**\n\n"
+            
+            if patterns.get('wednesday_monday_pattern'):
+                p = patterns['wednesday_monday_pattern']
+                message_fr += f"⚠️ Plus haut mercredi < plus haut lundi détecté\n"
+                message_fr += f"• Probable revisite du plus bas mercredi: **${p['wednesday_low']:.2f}** jeudi\n"
+                message_fr += f"• Titre clé: **{p['ticker']}**\n\n"
+        
+        message_fr += "_Automatisé par GitHub Actions_"
+        messages.append(message_fr)
+    
+    # Combine with separator if both languages
+    if language == "BOTH":
+        return "\n\n" + "─" * 50 + "\n\n".join(messages)
+    else:
+        return messages[0]
 
 
 # ============================================================================
