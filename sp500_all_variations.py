@@ -23,6 +23,7 @@ from io import StringIO
 
 WIKI_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_ALL_VARIATIONS")
+LANGUAGE = os.getenv("LANGUAGE", "BOTH").upper()  # EN, FR, or BOTH
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "50"))
 
 logging.basicConfig(
