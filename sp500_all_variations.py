@@ -153,6 +153,8 @@ def format_enhanced_ticker(ticker: str, data: Dict) -> str:
     open_price = OPEN_PRICES.get(ticker, data['open'])
     if pd.notna(open_price) and open_price > 0:  # ✅ Added validation
         since_open = ((current - open_price) / open_price) * 100
+    else:
+        since_open = 0.0
     
     # Change since last update (30 min ago)
     if ticker in PREVIOUS_PRICES:
