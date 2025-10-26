@@ -22,9 +22,15 @@ from io import StringIO
 
 WIKI_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-LANGUAGE = os.getenv("LANGUAGE", "BOTH").upper()  # EN, FR, or BOTH
 TOP_MOVER_PERCENTILE = float(os.getenv("TOP_MOVER_PERCENTILE", "75.0"))
 HISTORICAL_DAYS = int(os.getenv("HISTORICAL_DAYS", "5"))
+
+# ============ ADD THESE NEW LINES HERE ============
+COMPANY_NAMES = {}  # Will store ticker -> company name mapping
+PREVIOUS_PRICES = {}  # Prices from last update (30 min ago)
+OPEN_PRICES = {}  # Prices from market open
+YESTERDAY_CLOSES = {}  # Prices from yesterday close
+# ==================================================
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,6 +46,66 @@ logger = logging.getLogger(__name__)
 def to_ticker_symbol(sym: str) -> str:
     """Normalize ticker to Yahoo Finance format."""
     return sym.replace(".", "-").upper().strip()
+
+def get_company_names() -> Dict[str, str]:
+    """
+    Fetch company names from Wikipedia S&P 500 table.
+    Returns dict: {ticker: company_name}
+    """
+    logger.info("Fetching company names from Wikipedia...")
+    
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(WIKI_SP500_URL, headers=headers, timeout=20)
+        resp.raise_for_status()
+        
+        tables = pd.read_html(StringIO(resp.text), flavor="lxml")
+        for tbl in tables:
+            if "Symbol" in tbl.columns and "Security" in tbl.columns:
+                mapping = {}
+                for _, row in tbl.iterrows():
+                    ticker = str(row["Symbol"]).replace(".", "-").upper().strip()
+                    company = str(row["Security"]).strip()
+                    mapping[ticker] = company
+                
+                logger.info(f"✓ Loaded {len(mapping)} company names")
+                return mapping
+        
+        return {}
+    except Exception as e:
+        logger.error(f"Error fetching company names: {e}")
+        return {}
+
+def track_price_history(market_data: Dict):
+    """
+    Track prices across different timeframes.
+    Called after fetching market data each run.
+    """
+    global PREVIOUS_PRICES, OPEN_PRICES, YESTERDAY_CLOSES
+    
+    current_time = datetime.now()
+    current_hour = current_time.hour
+    current_minute = current_time.minute
+    
+    # Check if this is market open (9:30 AM)
+    # In EDT: 13:30 UTC, in EST: 14:30 UTC
+    is_market_open = (current_hour == 13 and current_minute == 30) or \
+                     (current_hour == 14 and current_minute == 30)
+    
+    for ticker, data in market_data.items():
+        current_price = data['current_price']
+        
+        # At market open, store opening prices
+        if is_market_open or ticker not in OPEN_PRICES:
+            OPEN_PRICES[ticker] = data['open']
+            
+            # Store yesterday's close (approximate with today's open if gap exists)
+            if ticker not in YESTERDAY_CLOSES:
+                YESTERDAY_CLOSES[ticker] = data['open']
+        
+        # Always update previous price for next run
+        PREVIOUS_PRICES[ticker] = current_price
+
 
 
 def get_sp500_tickers() -> List[str]:
@@ -73,6 +139,35 @@ def get_sp500_tickers() -> List[str]:
         
         raise RuntimeError("Failed to fetch S&P 500 tickers")
 
+def format_enhanced_ticker(ticker: str, data: Dict) -> str:
+    """
+    Format ticker with company name and multi-timeframe changes.
+    
+    Returns: "Company Name | TICKER: +X.XX% (+Y.YY% since last | +Z.ZZ% since yesterday)"
+    """
+    company = COMPANY_NAMES.get(ticker, ticker)
+    current = data['current_price']
+    
+    # Change since market open
+    open_price = OPEN_PRICES.get(ticker, data['open'])
+    since_open = ((current - open_price) / open_price) * 100
+    
+    # Change since last update (30 min ago)
+    if ticker in PREVIOUS_PRICES:
+        prev = PREVIOUS_PRICES[ticker]
+        since_last = ((current - prev) / prev) * 100
+    else:
+        since_last = 0.0
+    
+    # Change since yesterday close
+    yesterday = YESTERDAY_CLOSES.get(ticker, open_price)
+    since_yesterday = ((current - yesterday) / yesterday) * 100
+    
+    # Build formatted string
+    result = f"**{company} | {ticker}**: {since_open:+.2f}% "
+    result += f"({since_last:+.2f}% since last | {since_yesterday:+.2f}% since yesterday close)"
+    
+    return result
 
 # ============================================================================
 # DATA FETCHING
@@ -727,20 +822,24 @@ def build_message(top_movers: Dict, patterns: Dict) -> str:
     if language in ["EN", "BOTH"]:
         message_en = f"**📊 S&P 500 Market Update - {timestamp}**\n\n"
         
-        # Top Gainers
+        # Top Gainers - ENHANCED FORMAT
         if top_movers.get('gainers'):
             message_en += "**🚀 Top Gainers (>75th percentile)**\n"
             for ticker, change in top_movers['gainers'][:5]:
-                if not pd.isna(change):
-                    message_en += f"• {ticker}: **+{change:.2f}%**\n"
+                if not pd.isna(change) and ticker in market_data:
+                    # Use new enhanced format
+                    formatted = format_enhanced_ticker(ticker, market_data[ticker])
+                    message_en += f"• {formatted}\n"
             message_en += "\n"
         
-        # Top Losers
+        # Top Losers - ENHANCED FORMAT  
         if top_movers.get('losers'):
             message_en += "**📉 Top Losers (>75th percentile)**\n"
             for ticker, change in top_movers['losers'][:5]:
-                if not pd.isna(change):
-                    message_en += f"• {ticker}: **{change:.2f}%**\n"
+                if not pd.isna(change) and ticker in market_data:
+                    # Use new enhanced format
+                    formatted = format_enhanced_ticker(ticker, market_data[ticker])
+                    message_en += f"• {formatted}\n"
             message_en += "\n"
         
         # Enhanced Pattern Analysis
@@ -800,6 +899,10 @@ async def main():
         # Validate configuration
         if not DISCORD_WEBHOOK_URL:
             raise ValueError("DISCORD_WEBHOOK_URL environment variable not set")
+
+        # Load company names
+        global COMPANY_NAMES
+        COMPANY_NAMES = get_company_names()
         
         # Step 1: Get tickers
         tickers = get_sp500_tickers()
@@ -838,6 +941,10 @@ async def main():
         
         # Step 6: Build and send message
         message = build_message(top_movers, patterns)
+
+        # Track prices for next update
+        track_price_history(market_data)
+        
         await send_discord_message(message)
         
         logger.info("="*60)
