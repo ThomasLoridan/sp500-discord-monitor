@@ -5,8 +5,9 @@ on:
     # Run every 30 minutes during market hours (9:30 AM - 4:00 PM ET)
     # Market hours in UTC: 14:30 - 21:00 (EST) or 13:30 - 20:00 (EDT)
     # This schedule uses EST timezone (Nov-Mar): 14:30 - 21:00 UTC
-    - cron: '30,0 14-20 * * 1-5'  # Every 30 min at :00 and :30, Mon-Fri
-    - cron: '0 21 * * 1-5'         # Final run at 21:00 UTC (4:00 PM ET)
+      - cron: '30 13 * * 1-5'        # 9:30 AM EDT - Market Open
+      - cron: '0,30 14-19 * * 1-5'   # Every 30 min
+      - cron: '0 20 * * 1-5'         # 4:00 PM EDT - Market Close
     
     # For EDT (Daylight Saving Time, Mar-Nov), uncomment this instead:
     # - cron: '30,0 13-19 * * 1-5'
