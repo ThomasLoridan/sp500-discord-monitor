@@ -813,7 +813,7 @@ async def send_discord_message(content: str) -> bool:
         return False
 
 
-def build_message(top_movers: Dict, patterns: Dict) -> str:
+def build_message(top_movers: Dict, patterns: Dict, market_data: Dict) -> str:
     """Build formatted Discord message with enhanced pattern analysis."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
     language = os.getenv("LANGUAGE", "EN").upper()
@@ -942,7 +942,7 @@ async def main():
         patterns = analyze_enhanced_patterns(historical_data)
         
         # Step 6: Build and send message
-        message = build_message(top_movers, patterns)
+        message = build_message(top_movers, patterns, market_data)
 
         # Track prices for next update
         track_price_history(market_data)
