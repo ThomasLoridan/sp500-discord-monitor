@@ -1,0 +1,115 @@
+name: Fundamental Analysis Scanner
+
+on:
+  schedule:
+    # Market Open (9:30 AM ET)
+    # EDT: 9:30 AM EDT = 13:30 UTC
+    - cron: '30 13 * 3-10 1-5'
+    # EST: 9:30 AM EST = 14:30 UTC
+    - cron: '30 14 * 11-12,1-2 1-5'
+    
+    # Market Close (4:00 PM ET)
+    # EDT: 4:00 PM EDT = 20:00 UTC
+    - cron: '0 20 * 3-10 1-5'
+    # EST: 4:00 PM EST = 21:00 UTC
+    - cron: '0 21 * 11-12,1-2 1-5'
+  
+  workflow_dispatch:
+
+jobs:
+  fundamental-analysis:
+    name: Run Fundamental Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Detect Timezone and Session
+        id: detection
+        run: |
+          echo "💼 Fundamental Analysis Scanner"
+          echo "=============================="
+          
+          CURRENT_MONTH=$(date -u +%m)
+          CURRENT_DAY=$(date -u +%d)
+          CURRENT_HOUR=$(date -u +%H)
+          
+          # Determine timezone
+          if [ $CURRENT_MONTH -ge 3 ] && [ $CURRENT_MONTH -le 10 ]; then
+            if [ $CURRENT_MONTH -eq 3 ] && [ $CURRENT_DAY -lt 8 ]; then
+              TZ_NAME="EST"
+            elif [ $CURRENT_MONTH -eq 11 ] && [ $CURRENT_DAY -ge 8 ]; then
+              TZ_NAME="EST"
+            else
+              TZ_NAME="EDT"
+            fi
+          else
+            TZ_NAME="EST"
+          fi
+          
+          # Determine session (Market Open or Close)
+          if [ "$TZ_NAME" == "EDT" ]; then
+            if [ $CURRENT_HOUR -eq 13 ]; then
+              SESSION="MARKET OPEN"
+            else
+              SESSION="MARKET CLOSE"
+            fi
+          else
+            if [ $CURRENT_HOUR -eq 14 ]; then
+              SESSION="MARKET OPEN"
+            else
+              SESSION="MARKET CLOSE"
+            fi
+          fi
+          
+          echo "timezone=$TZ_NAME" >> $GITHUB_OUTPUT
+          echo "session=$SESSION" >> $GITHUB_OUTPUT
+          
+          echo "Timezone: $TZ_NAME"
+          echo "Session: $SESSION"
+          echo "UTC: $(date -u '+%Y-%m-%d %H:%M:%S')"
+          echo "Eastern: $(TZ='America/New_York' date '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "France: $(TZ='Europe/Paris' date '+%Y-%m-%d %H:%M:%S %Z')"
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install yfinance pandas numpy requests aiohttp lxml tzdata
+      
+      - name: Run Fundamental Analysis
+        env:
+          DISCORD_WEBHOOK_FUNDAMENTAL: ${{ secrets.DISCORD_WEBHOOK_FUNDAMENTAL }}
+          LANGUAGE: ${{ vars.LANGUAGE || 'EN' }}
+          TOP_N_OPPORTUNITIES: ${{ vars.TOP_N_OPPORTUNITIES || '20' }}
+          DETECTED_TIMEZONE: ${{ steps.detection.outputs.timezone }}
+          SESSION: ${{ steps.detection.outputs.session }}
+        run: |
+          echo "=========================================="
+          echo "S&P 500 Fundamental Analysis"
+          echo "=========================================="
+          echo "Timezone: $DETECTED_TIMEZONE"
+          echo "Session: $SESSION"
+          echo "Calculating P/E ratios and investment opportunities..."
+          echo ""
+          python sp500_fundamental_analysis.py
+          echo ""
+          echo "✓ Fundamental analysis completed"
+          echo "=========================================="
+      
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fundamental-analysis-logs-${{ github.run_number }}
+          path: |
+            *.log
+            **/*.log
+          retention-days: 7
+          if-no-files-found: warn
