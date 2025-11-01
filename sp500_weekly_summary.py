@@ -123,17 +123,17 @@ async def fetch_weekly_data(tickers: List[str]) -> Dict[str, pd.DataFrame]:
 
 
 def analyze_weekly_performance(weekly_data: Dict) -> Dict:
-    """Analyze week's overall performance."""
+    """Analyze week's overall performance with detailed tracking."""
     week_changes = []
     volatilities = []
     volumes = []
+    stock_performances = []  # NEW: Track individual stocks
     
     for ticker, df in weekly_data.items():
         if len(df) < 5:
             continue
         
         try:
-            # Last 5 trading days = 1 week
             week_df = df.tail(5)
             
             week_start = week_df.iloc[0]['Close']
@@ -141,7 +141,15 @@ def analyze_weekly_performance(weekly_data: Dict) -> Dict:
             week_change = ((week_end - week_start) / week_start) * 100
             week_changes.append(week_change)
             
-            # Volatility (std dev of daily returns)
+            # Track individual performance
+            stock_performances.append({
+                'ticker': ticker,
+                'change': week_change,
+                'start': week_start,
+                'end': week_end
+            })
+            
+            # Volatility
             daily_returns = week_df['Close'].pct_change().dropna() * 100
             volatility = daily_returns.std()
             volatilities.append(volatility)
@@ -159,6 +167,9 @@ def analyze_weekly_performance(weekly_data: Dict) -> Dict:
     gainers = sum(1 for c in week_changes if c > 0)
     losers = sum(1 for c in week_changes if c < 0)
     
+    # Sort performances to find best/worst
+    stock_performances.sort(key=lambda x: x['change'], reverse=True)
+    
     return {
         'total_stocks': len(week_changes),
         'gainers': gainers,
@@ -167,6 +178,10 @@ def analyze_weekly_performance(weekly_data: Dict) -> Dict:
         'median_change': np.median(week_changes),
         'best_performer': max(week_changes),
         'worst_performer': min(week_changes),
+        'best_stock': stock_performances[0] if stock_performances else None,
+        'worst_stock': stock_performances[-1] if stock_performances else None,
+        'top_winners': stock_performances[:10],  # Top 10 winners
+        'top_losers': stock_performances[-10:],  # Top 10 losers
         'avg_volatility': np.mean(volatilities),
         'median_volatility': np.median(volatilities),
         'high_volatility_stocks': sum(1 for v in volatilities if v > 3.0),
@@ -294,14 +309,13 @@ def build_weekly_summary_message(
     trends: Dict,
     company_names: Dict
 ) -> str:
-    """Build comprehensive weekly summary message."""
+    """Build comprehensive weekly summary message with company details."""
     
     now_eastern = datetime.now(TIMEZONE_US_EASTERN)
     now_france = datetime.now(TIMEZONE_FRANCE)
     
-    # Get week date range
-    week_end = now_eastern - timedelta(days=now_eastern.weekday() + 1)  # Last Friday
-    week_start = week_end - timedelta(days=4)  # Previous Monday
+    week_end = now_eastern - timedelta(days=now_eastern.weekday() + 1)
+    week_start = week_end - timedelta(days=4)
     
     msg = f"**📊 S&P 500 WEEKLY MARKET SUMMARY**\n"
     msg += f"**Week of {week_start.strftime('%B %d')} - {week_end.strftime('%B %d, %Y')}**\n"
@@ -310,19 +324,45 @@ def build_weekly_summary_message(
     msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     msg += "**📈 WEEK IN REVIEW**\n\n"
     
-    # Overall performance
     avg_change = weekly_stats['avg_change']
     emoji = "🟢" if avg_change > 0 else "🔴"
     
     msg += f"**Market Performance**: {emoji} **{avg_change:+.2f}%**\n"
-    msg += f"• Best Performer: **+{weekly_stats['best_performer']:.2f}%**\n"
-    msg += f"• Worst Performer: **{weekly_stats['worst_performer']:.2f}%**\n"
+    
+    # Enhanced best/worst performers with company names
+    if weekly_stats.get('best_stock'):
+        best = weekly_stats['best_stock']
+        best_company = company_names.get(best['ticker'], best['ticker'])
+        msg += f"• Best Performer: **{best_company} ({best['ticker']})**: **+{best['change']:.2f}%**\n"
+    else:
+        msg += f"• Best Performer: **+{weekly_stats['best_performer']:.2f}%**\n"
+    
+    if weekly_stats.get('worst_stock'):
+        worst = weekly_stats['worst_stock']
+        worst_company = company_names.get(worst['ticker'], worst['ticker'])
+        msg += f"• Worst Performer: **{worst_company} ({worst['ticker']})**: **{worst['change']:.2f}%**\n"
+    else:
+        msg += f"• Worst Performer: **{weekly_stats['worst_performer']:.2f}%**\n"
+    
     msg += f"• Median Change: **{weekly_stats['median_change']:+.2f}%**\n\n"
     
     msg += f"**Market Breadth**:\n"
     msg += f"• Winners: **{weekly_stats['gainers']}** ({weekly_stats['gainers']/weekly_stats['total_stocks']*100:.1f}%)\n"
     msg += f"• Losers: **{weekly_stats['losers']}** ({weekly_stats['losers']/weekly_stats['total_stocks']*100:.1f}%)\n"
     msg += f"• W/L Ratio: **{weekly_stats['gainers']/weekly_stats['losers']:.2f}**\n\n"
+    
+    # Add detailed winners/losers breakdown
+    msg += "**🏆 Top 5 Winners of the Week**:\n"
+    for i, stock in enumerate(weekly_stats.get('top_winners', [])[:5], 1):
+        company = company_names.get(stock['ticker'], stock['ticker'])
+        msg += f"{i}. **{company}** ({stock['ticker']}): **+{stock['change']:.2f}%**\n"
+    msg += "\n"
+    
+    msg += "**📉 Top 5 Losers of the Week**:\n"
+    for i, stock in enumerate(list(reversed(weekly_stats.get('top_losers', [])))[:5], 1):
+        company = company_names.get(stock['ticker'], stock['ticker'])
+        msg += f"{i}. **{company}** ({stock['ticker']}): **{stock['change']:.2f}%**\n"
+    msg += "\n"
     
     msg += f"**Volatility**:\n"
     msg += f"• Average: **{weekly_stats['avg_volatility']:.2f}%**\n"
