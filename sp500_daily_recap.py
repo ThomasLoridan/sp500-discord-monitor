@@ -113,7 +113,7 @@ def get_company_names() -> Dict[str, str]:
 
 
 async def fetch_daily_data(tickers: List[str]) -> Dict[str, Dict]:
-    """Fetch full day's trading data."""
+    """Fetch full day's trading data with robust validation."""
     logger.info(f"Fetching daily data for {len(tickers)} tickers...")
     
     results = {}
@@ -141,17 +141,34 @@ async def fetch_daily_data(tickers: List[str]) -> Dict[str, Dict]:
                     if ticker_data.empty:
                         continue
                     
+                    # Extract values with validation
                     open_price = ticker_data['Open'].iloc[0]
                     close_price = ticker_data['Close'].iloc[-1]
                     high = ticker_data['High'].max()
                     low = ticker_data['Low'].min()
                     volume = ticker_data['Volume'].sum()
                     
-                    if pd.isna(close_price) or close_price <= 0:
+                    # Strict validation - skip if ANY value is invalid
+                    if pd.isna(open_price) or pd.isna(close_price) or pd.isna(high) or pd.isna(low):
+                        logger.debug(f"Skipping {ticker}: NaN values detected")
                         continue
                     
+                    if open_price <= 0 or close_price <= 0:
+                        logger.debug(f"Skipping {ticker}: Zero or negative prices")
+                        continue
+                    
+                    # Calculate metrics
                     daily_change = ((close_price - open_price) / open_price) * 100
                     intraday_range = ((high - low) / open_price) * 100
+                    
+                    # Validate calculated values
+                    if pd.isna(daily_change) or pd.isna(intraday_range):
+                        logger.debug(f"Skipping {ticker}: Calculated NaN")
+                        continue
+                    
+                    if np.isinf(daily_change) or np.isinf(intraday_range):
+                        logger.debug(f"Skipping {ticker}: Infinite values")
+                        continue
                     
                     results[ticker] = {
                         'open': float(open_price),
@@ -170,9 +187,12 @@ async def fetch_daily_data(tickers: List[str]) -> Dict[str, Dict]:
         except Exception as e:
             logger.error(f"Error fetching batch: {e}")
             continue
+        
+        await asyncio.sleep(0.5)
     
-    logger.info(f"✓ Fetched data for {len(results)} stocks")
+    logger.info(f"✓ Fetched valid data for {len(results)} stocks")
     return results
+
 
 
 async def fetch_weekly_historical(tickers: List[str], days: int = 7) -> Dict[str, pd.DataFrame]:
@@ -220,26 +240,61 @@ async def fetch_weekly_historical(tickers: List[str], days: int = 7) -> Dict[str
 # ============================================================================
 
 def analyze_day_performance(daily_data: Dict) -> Dict:
-    """Comprehensive daily performance analysis."""
+    """Comprehensive daily performance analysis with NaN protection."""
     if not daily_data:
-        return {}
+        return {
+            'total_stocks': 0,
+            'gainers': 0,
+            'losers': 0,
+            'unchanged': 0,
+            'avg_change': 0.0,
+            'median_change': 0.0,
+            'std_dev': 0.0,
+            'total_volume': 0,
+            'avg_volume': 0.0,
+            'avg_volatility': 0.0,
+            'sentiment': '⚪ No Data',
+            'advance_decline': 0,
+            'advance_decline_ratio': 0.0
+        }
     
-    changes = [d['daily_change'] for d in daily_data.values()]
-    volumes = [d['volume'] for d in daily_data.values()]
-    volatilities = [d['intraday_range'] for d in daily_data.values()]
+    # Filter out any remaining NaN values
+    valid_changes = [d['daily_change'] for d in daily_data.values() 
+                     if not pd.isna(d['daily_change']) and not np.isinf(d['daily_change'])]
+    valid_volumes = [d['volume'] for d in daily_data.values() 
+                     if not pd.isna(d['volume']) and d['volume'] > 0]
+    valid_volatilities = [d['intraday_range'] for d in daily_data.values() 
+                          if not pd.isna(d['intraday_range']) and not np.isinf(d['intraday_range'])]
     
-    gainers = sum(1 for c in changes if c > 0)
-    losers = sum(1 for c in changes if c < 0)
-    unchanged = len(changes) - gainers - losers
+    if not valid_changes:
+        return {
+            'total_stocks': len(daily_data),
+            'gainers': 0,
+            'losers': 0,
+            'unchanged': 0,
+            'avg_change': 0.0,
+            'median_change': 0.0,
+            'std_dev': 0.0,
+            'total_volume': sum(valid_volumes) if valid_volumes else 0,
+            'avg_volume': np.mean(valid_volumes) if valid_volumes else 0.0,
+            'avg_volatility': 0.0,
+            'sentiment': '⚪ Insufficient Data',
+            'advance_decline': 0,
+            'advance_decline_ratio': 0.0
+        }
     
-    avg_change = np.mean(changes)
-    median_change = np.median(changes)
-    std_dev = np.std(changes)
+    gainers = sum(1 for c in valid_changes if c > 0)
+    losers = sum(1 for c in valid_changes if c < 0)
+    unchanged = len(valid_changes) - gainers - losers
     
-    total_volume = sum(volumes)
-    avg_volume = np.mean(volumes)
+    avg_change = float(np.mean(valid_changes))
+    median_change = float(np.median(valid_changes))
+    std_dev = float(np.std(valid_changes))
     
-    avg_volatility = np.mean(volatilities)
+    total_volume = int(sum(valid_volumes)) if valid_volumes else 0
+    avg_volume = float(np.mean(valid_volumes)) if valid_volumes else 0.0
+    
+    avg_volatility = float(np.mean(valid_volatilities)) if valid_volatilities else 0.0
     
     # Market sentiment
     if avg_change > 1.0:
@@ -253,12 +308,11 @@ def analyze_day_performance(daily_data: Dict) -> Dict:
     else:
         sentiment = "🔴 STRONGLY BEARISH"
     
-    # Breadth analysis
     advance_decline = gainers - losers
     advance_decline_ratio = gainers / losers if losers > 0 else float('inf')
     
     return {
-        'total_stocks': len(changes),
+        'total_stocks': len(daily_data),
         'gainers': gainers,
         'losers': losers,
         'unchanged': unchanged,
