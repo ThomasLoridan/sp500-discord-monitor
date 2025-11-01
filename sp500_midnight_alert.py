@@ -32,8 +32,36 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# COMPANY NAME MAPPING
+# TICKER AND COMPANY NAME FETCHING (FIXED - Was missing)
 # ============================================================================
+
+def to_ticker_symbol(sym: str) -> str:
+    """Normalize ticker to Yahoo Finance format."""
+    return sym.replace(".", "-").upper().strip()
+
+
+def get_sp500_tickers() -> List[str]:
+    """Scrape Wikipedia for S&P 500 ticker list."""
+    logger.info("Fetching S&P 500 tickers from Wikipedia...")
+    
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(WIKI_SP500_URL, headers=headers, timeout=20)
+        resp.raise_for_status()
+        
+        tables = pd.read_html(StringIO(resp.text), flavor="lxml")
+        for tbl in tables:
+            if "Symbol" in tbl.columns:
+                tickers = sorted({to_ticker_symbol(s) for s in tbl["Symbol"].astype(str)})
+                logger.info(f"✓ Loaded {len(tickers)} tickers")
+                return tickers
+        
+        raise RuntimeError("Couldn't parse tickers from Wikipedia")
+    
+    except Exception as e:
+        logger.error(f"Error fetching tickers: {e}")
+        raise
+
 
 def get_company_names() -> Dict[str, str]:
     """Fetch company names from Wikipedia S&P 500 table."""
@@ -52,13 +80,63 @@ def get_company_names() -> Dict[str, str]:
                     company = str(row["Security"]).strip()
                     mapping[ticker] = company
                 
-                logger.info(f"Loaded {len(mapping)} company names")
+                logger.info(f"✓ Loaded {len(mapping)} company names")
                 return mapping
         
         return {}
     except Exception as e:
         logger.error(f"Error fetching company names: {e}")
         return {}
+
+
+# ============================================================================
+# DATA FETCHING (FIXED - Was just 'pass')
+# ============================================================================
+
+async def fetch_historical_data(tickers: List[str], days: int = 5) -> Dict[str, pd.DataFrame]:
+    """Fetch historical data for pattern analysis."""
+    logger.info(f"Fetching {days} days of historical data for {len(tickers)} tickers...")
+    
+    results = {}
+    batch_size = 100
+    
+    for i in range(0, len(tickers), batch_size):
+        batch = tickers[i:i + batch_size]
+        
+        try:
+            data = yf.download(
+                batch,
+                period=f"{days}d",
+                interval="1d",
+                group_by='ticker',
+                progress=False,
+                threads=True
+            )
+            
+            for ticker in batch:
+                try:
+                    if len(batch) == 1:
+                        ticker_data = data
+                    else:
+                        ticker_data = data[ticker]
+                    
+                    if not ticker_data.empty and len(ticker_data) >= 3:
+                        results[ticker] = ticker_data
+                
+                except Exception as e:
+                    logger.debug(f"Error processing {ticker}: {e}")
+                    continue
+        
+        except Exception as e:
+            logger.warning(f"Batch error: {e}")
+            continue
+        
+        # Small delay between batches
+        if i + batch_size < len(tickers):
+            await asyncio.sleep(0.5)
+    
+    logger.info(f"✓ Fetched historical data for {len(results)} stocks")
+    return results
 
 
 # ============================================================================
@@ -92,9 +170,10 @@ async def analyze_tomorrow_patterns(tickers: List[str]) -> Dict:
     }
     
     # Fetch historical data (last 5 days)
-    historical_data = await fetch_historical_data(tickers, days=5)
+    historical_data = await fetch_historical_data(tickers, days=7)
     
     if not historical_data:
+        logger.warning("No historical data available")
         return predictions
     
     # Monday Analysis (Friday-Thursday pattern)
@@ -112,6 +191,9 @@ async def analyze_tomorrow_patterns(tickers: List[str]) -> Dict:
         if wednesday_patterns:
             predictions['patterns_detected'].append(wednesday_patterns)
             predictions['stocks_to_watch'].extend(wednesday_patterns['top_stocks'][:10])
+    
+    else:
+        logger.info(f"Tomorrow is {tomorrow.strftime('%A')} - no specific patterns to analyze")
     
     # Analyze key support/resistance for top stocks
     if predictions['stocks_to_watch']:
@@ -142,7 +224,7 @@ def analyze_friday_thursday_midnight(historical_data: Dict[str, pd.DataFrame]) -
             continue
         
         try:
-            recent = df.tail(5).copy()
+            recent = df.tail(7).copy()
             recent['weekday'] = pd.to_datetime(recent.index).dayofweek
             
             friday_rows = recent[recent['weekday'] == 4]
@@ -159,9 +241,14 @@ def analyze_friday_thursday_midnight(historical_data: Dict[str, pd.DataFrame]) -
             friday_low = friday_data['Low']
             friday_close = friday_data['Close']
             
+            # Check pattern condition
             if friday_high < thursday_high:
                 high_diff_pct = ((thursday_high - friday_high) / thursday_high) * 100
                 potential_drop = ((friday_close - friday_low) / friday_close) * 100
+                
+                # Skip if values are invalid
+                if pd.isna(high_diff_pct) or pd.isna(potential_drop):
+                    continue
                 
                 # Calculate urgency score
                 urgency = calculate_urgency(high_diff_pct, potential_drop)
@@ -207,7 +294,7 @@ def analyze_wednesday_monday_midnight(historical_data: Dict[str, pd.DataFrame]) 
             continue
         
         try:
-            recent = df.tail(5).copy()
+            recent = df.tail(7).copy()
             recent['weekday'] = pd.to_datetime(recent.index).dayofweek
             
             wednesday_rows = recent[recent['weekday'] == 2]
@@ -224,9 +311,14 @@ def analyze_wednesday_monday_midnight(historical_data: Dict[str, pd.DataFrame]) 
             wednesday_low = wednesday_data['Low']
             wednesday_close = wednesday_data['Close']
             
+            # Check pattern condition
             if wednesday_high < monday_high:
                 high_diff_pct = ((monday_high - wednesday_high) / monday_high) * 100
                 potential_drop = ((wednesday_close - wednesday_low) / wednesday_close) * 100
+                
+                # Skip if values are invalid
+                if pd.isna(high_diff_pct) or pd.isna(potential_drop):
+                    continue
                 
                 urgency = calculate_urgency(high_diff_pct, potential_drop)
                 
@@ -289,24 +381,28 @@ def calculate_key_levels_batch(
         if ticker not in historical_data:
             continue
         
-        df = historical_data[ticker]
-        recent = df.tail(20)
-        
-        # Calculate support (recent lows)
-        support = recent['Low'].min()
-        
-        # Calculate resistance (recent highs)
-        resistance = recent['High'].max()
-        
-        # Current price
-        current = df['Close'].iloc[-1]
-        
-        levels[ticker] = {
-            'current': float(current),
-            'support': float(support),
-            'resistance': float(resistance),
-            'target': stock.get('target_low', support)
-        }
+        try:
+            df = historical_data[ticker]
+            recent = df.tail(20)
+            
+            # Calculate support (recent lows)
+            support = recent['Low'].min()
+            
+            # Calculate resistance (recent highs)
+            resistance = recent['High'].max()
+            
+            # Current price
+            current = df['Close'].iloc[-1]
+            
+            levels[ticker] = {
+                'current': float(current),
+                'support': float(support),
+                'resistance': float(resistance),
+                'target': stock.get('target_low', support)
+            }
+        except Exception as e:
+            logger.debug(f"Error calculating levels for {ticker}: {e}")
+            continue
     
     return levels
 
@@ -365,7 +461,7 @@ def build_midnight_alert_english(predictions: Dict, company_names: Dict) -> str:
     
     if not predictions['patterns_detected']:
         msg += "✅ **No significant patterns detected for tomorrow**\n"
-        msg += "Expected: Normal trading conditions\n"
+        msg += f"Expected: Normal {predictions['day_name']} trading conditions\n"
         msg += "Strategy: Standard approach\n\n"
         msg += "_Next midnight alert: Tomorrow at 12:00 AM ET_"
         return msg
@@ -430,7 +526,7 @@ def build_midnight_alert_french(predictions: Dict, company_names: Dict) -> str:
     
     if not predictions['patterns_detected']:
         msg += "✅ **Aucun pattern significatif détecté pour demain**\n"
-        msg += "Attendu: Conditions de trading normales\n"
+        msg += f"Attendu: Conditions de trading {predictions['day_name']} normales\n"
         msg += "Stratégie: Approche standard\n\n"
         msg += "_Prochaine alerte minuit: Demain à 00h00 ET_"
         return msg
@@ -480,14 +576,8 @@ def build_midnight_alert_french(predictions: Dict, company_names: Dict) -> str:
 
 
 # ============================================================================
-# HELPER FUNCTIONS (Reuse from main script)
+# DISCORD SENDING
 # ============================================================================
-
-async def fetch_historical_data(tickers: List[str], days: int = 5) -> Dict[str, pd.DataFrame]:
-    """Fetch historical data - same as main script."""
-    # Copy implementation from sp500_discord_monitor.py
-    pass
-
 
 async def send_discord_message(content: str) -> bool:
     """Send to midnight webhook."""
@@ -495,28 +585,37 @@ async def send_discord_message(content: str) -> bool:
         logger.error("DISCORD_WEBHOOK_MIDNIGHT not set")
         return False
     
-    payload = {
-        "content": content[:2000],  # Discord limit
-        "username": "Midnight Market Alert",
-        "avatar_url": "https://cdn-icons-png.flaticon.com/512/2784/2784459.png"
-    }
+    # Split if message too long
+    chunks = [content[i:i+1900] for i in range(0, len(content), 1900)]
     
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                DISCORD_WEBHOOK_MIDNIGHT,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as response:
-                if response.status == 204:
-                    logger.info("✓ Midnight alert sent")
-                    return True
-                else:
-                    logger.error(f"Discord error {response.status}")
-                    return False
-    except Exception as e:
-        logger.error(f"Error sending alert: {e}")
-        return False
+    for chunk in chunks:
+        payload = {
+            "content": chunk,
+            "username": "Midnight Market Alert",
+            "avatar_url": "https://cdn-icons-png.flaticon.com/512/2784/2784459.png"
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    DISCORD_WEBHOOK_MIDNIGHT,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 204:
+                        logger.info("✓ Midnight alert sent")
+                    else:
+                        logger.error(f"Discord error {response.status}")
+                        return False
+                    
+                    # Rate limit between chunks
+                    await asyncio.sleep(1)
+        
+        except Exception as e:
+            logger.error(f"Error sending alert: {e}")
+            return False
+    
+    return True
 
 
 # ============================================================================
@@ -531,11 +630,14 @@ async def main():
     logger.info("="*60)
     
     try:
+        if not DISCORD_WEBHOOK_MIDNIGHT:
+            raise ValueError("DISCORD_WEBHOOK_MIDNIGHT environment variable not set")
+        
         # Get company names
         company_names = get_company_names()
         
         # Get ticker list
-        tickers = get_sp500_tickers()  # Implement same as main script
+        tickers = get_sp500_tickers()
         
         # Analyze tomorrow's patterns
         predictions = await analyze_tomorrow_patterns(tickers)
@@ -544,10 +646,23 @@ async def main():
         message = build_midnight_alert(predictions, company_names)
         await send_discord_message(message)
         
+        logger.info("="*60)
         logger.info("✓ Midnight alert completed successfully")
+        logger.info(f"  Predictions for: {predictions['day_name']}")
+        logger.info(f"  Patterns detected: {len(predictions['patterns_detected'])}")
+        logger.info("="*60)
     
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
+        
+        # Try to send error notification
+        try:
+            await send_discord_message(
+                f"⚠️ **Midnight Alert Error**\n```{str(e)}```"
+            )
+        except:
+            pass
+        
         raise
 
 
